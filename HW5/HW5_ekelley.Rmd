@@ -1,0 +1,184 @@
+---
+title: "HW5"
+author: "E. Kelley"
+date: "11/08/2022"
+output: pdf_document
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+library(MASS)
+library(caret)
+library(glmnet)
+library(ISLR)
+```
+
+## Exercise 1
+
+### A)
+
+There are 8 numeric predictors and 3 categorical predictors. Price and Sales are negatively correlated as well as Age and Sales. This isn't surprising given an older population has less need for carseats, and the higher price would likely result in fewer sales. Sales, income, and Advertising are positively correlated. Price and compPrice are strongly positively correlated, which makes sense given the competition for sales.
+
+```{r}
+data("Carseats")
+glimpse(Carseats)
+?Carseats
+library(corrplot)
+cs_cor <- cor(Carseats[,-c(7,10,11)], method = "spearman")
+corrplot(cs_cor)
+```
+
+### B)
+
+I was surprised to see such a large coefficient estimate for shelving location. Coefficients for population, education, urban, and US are not significant, so we can likely drop these.
+
+```{r}
+sales_model_all <- lm(Sales ~ ., data = Carseats)
+summary(sales_model_all)
+```
+
+### C)
+
+```{r}
+smallest <- Sales ~ 1
+largest <- Sales ~ CompPrice + Income + Advertising + Population + Price + ShelveLoc + Age + Education + Urban + US
+sales_model_smallest <- lm(Sales ~ 1, data = Carseats)
+summary(sales_model_smallest)
+step(sales_model_smallest, scope = list(lower=smallest, upper=largest))
+sales_model_lowest_aic <- lm(formula = Sales ~ ShelveLoc + Price + CompPrice + Advertising + 
+    Age + Income, data = Carseats)
+```
+
+Based on stepwise selection the best model is:
+
+    lm(formula = Sales ~ ShelveLoc + Price + CompPrice + Advertising + 
+        Age + Income, data = Carseats)
+
+### D)
+
+```{r}
+train_control = trainControl(method = "cv", number = 10)
+
+cv_sales_model_all = train(Sales ~ ShelveLoc + Price + CompPrice + Advertising + 
+    Age + Income + Population + Education + Urban + US, data = Carseats, trControl = train_control, method = "lm")
+
+summary(cv_sales_model_all)
+cv_sales_model_all$results$RMSE
+cv_sales_model_lowest_aic = train(Sales ~ ShelveLoc + Price + CompPrice + Advertising + 
+    Age + Income, data = Carseats, trControl = train_control, method = "lm")
+
+summary(cv_sales_model_lowest_aic)
+cv_sales_model_all$results$RMSE
+```
+
+## Exercise 2
+
+```{r}
+n_bootstrap_samples = 100000
+
+boot_coeffs = vector("list", n_bootstrap_samples)
+
+for(sample in 1:n_bootstrap_samples){
+  bootstrap_sample = Carseats[sample(seq(1:nrow(Carseats)), nrow(Carseats), replace=TRUE),]
+  
+  bs_lr_fit = lm(formula = Sales ~ ShelveLoc + Price + CompPrice + Advertising + 
+    Age + Income, data = bootstrap_sample)
+  
+  boot_coeffs[[sample]] <- bs_lr_fit$coefficients
+}
+
+boot_coeffs_df <- bind_rows(boot_coeffs)
+boot_coeffs_df %>%
+imap(~hist(.x, main=.y))
+
+```
+
+## Exercise 3
+
+### A)
+
+```{r}
+college <- read_csv("College.csv") %>% janitor::clean_names() %>%
+  rename(college_name = x1)
+set.seed(578)
+train_num = round(nrow(college)*0.7)
+train <- sample(1:nrow(college), train_num)
+test <- (-train)
+y.test <- college$apps[test]
+```
+
+### B) 
+
+Highest MSE for all predictors: 1,041,981
+
+```{r}
+college_model_all <- lm(apps ~ ., data = college[train,-1])
+summary(college_model_all)
+preds_college_model_all <- predict(college_model_all, newdata = college[-train,-1], type = "response")
+paste0("College lm all predictors MSE: ", round(mean((preds_college_model_all - y.test)^2), digits = 2))
+
+# could have used glmnet predict with lambda = 0 to get the OLS MSE
+```
+
+### C)
+
+```{r}
+# set up for ridge & lasso
+x = model.matrix(apps ~., data=college[,-1])[,-1]
+y = college$apps
+
+grid = 10^seq(10, -2, length=100)
+```
+
+Ridge is not an improvement over the all variables, kitchen sink lm above. MSE of 1,079,767.
+
+```{r}
+ridge.mod = glmnet(x[train,], y[train], alpha=0, lambda=grid) # alpha = 0 for ridge
+cv.out = cv.glmnet(x[train,], y[train], alpha=0)
+bestlam = cv.out$lambda.min
+bestlam
+
+ridge.pred = predict(ridge.mod, s = bestlam, newx=x[test,])
+mean((ridge.pred - y.test)^2)
+
+out = glmnet(x, y, alpha=0)
+ridge.coef = predict(out, type="coefficients", s=bestlam) [1:18,]
+ridge.coef
+```
+
+### D)
+
+It looks like lasso has the lowest MSE: 1,037,826 but by a slim margin. I actually messed up my set.seed for these calcs and had different models come up with lower MSE, so I must conclude that they are all relatively close. I think maybe the "best" model is the lasso since it is the simplest (lowest complexity) and performs comparably as evaluated by MSE.
+
+```{r}
+lasso.mod = glmnet(x[train,], y[train], alpha=1, lambda=grid)
+cv.out = cv.glmnet(x[train,], y[train], alpha=1) # alpha = 1 for lasso
+bestlam = cv.out$lambda.min
+bestlam
+
+lasso.pred = predict(lasso.mod, s = bestlam, newx=x[test,])
+paste0("MSE :", mean((lasso.pred - y.test)^2))
+paste0("RMSE :", sqrt(mean((lasso.pred - y.test)^2)))
+```
+
+A RMSE of \~1000 seems too high to be useful given the mean of our observed applications is 3,000 (median \~1,500). I would expect in order for a prediction to be useful, especially for these many colleges with lower-applications, you would need something like +/- 20%. It really depends on how the model will be used.
+
+```{r}
+ggplot(college, aes(x=apps)) + geom_histogram(binwidth = 200)
+```
+
+Take a look at lasso variable selection. Some variables were shrunken (is that a word?) to zero: f_undergrad and books in my first go-round, and now they are non-zero (although barely)! I think this is just a result of random variation in my training/testing observations when set.seed was changed. 
+
+```{r}
+out = glmnet(x, y, alpha=1)
+lasso.coef = predict(out, type="coefficients", s=bestlam) [1:18,]
+lasso.coef
+
+lasso.coef[lasso.coef!=0]
+
+
+```

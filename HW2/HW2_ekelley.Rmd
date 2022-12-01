@@ -1,0 +1,230 @@
+---
+title: "HW2"
+author: "E. Kelley"
+date: "9/24/2022"
+output: pdf_document
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+```
+
+## Exercise 1.
+Produce a function that is able to generate random samples given an inverse-CDF. The function should take as arguments the inverse-CDF and sample size. The output should be a vector with length equal sample size.
+```{r ex 1}
+sample_icdf <- function(icdf, s_size) {
+  U <- runif(s_size, min = 0, max = 1) # take s_size samples form  U~(0,1)
+  I <- icdf(U)
+  return(I)
+}
+inverse_cdf <- function(x) qnorm(x, 10, 2)
+
+out_test <- sample_icdf(inverse_cdf, 100)
+
+length(out_test) == 100
+is.vector(out_test)
+```
+
+
+## Exercise 2.
+Produce a function for generating random samples using the Rejection method using closed domain distributions. The function should take as arguments the PDF of the target distribution, the domain of the distribution, and a desired sample size. The output should be a vector with length equal to sample size.  
+
+```{r ex 2}
+# we have a pdf but don't know cdf, so use accept/reject method to generate random samples
+# from our distribution
+# REVIEW SLIDE 22 FOR PSEUDOCODE
+# pdf_test <- dnorm(qnorm(runif(100,0,1)))
+# sample_reject <- function(d_lower, d_upper, s_size){
+#   out <- c()
+#   while (length(out) < s_size){
+#   si <- runif(1,d_lower,d_upper) # draw random sample si along x
+#   ui <- runif(1,0,1) # draw random sample ui
+#   f_si <- dnorm(si, mean = 8, sd=1.2) # get pdf value for si, ie f(si)
+#   M_g_si <- 5*dunif(si, d_lower, d_upper) #how to get the value for M?
+#   p_acc <- f_si/M_g_si
+#   if (ui <= p_acc){
+#     out <- append(out, ui)
+#     print(out)
+#   }
+#   return(out)
+#   }
+# }
+# test <- sample_reject(d_lower = 0, d_upper = 112, s_size=10000)
+
+# Keeping code below so I can go back and review what I was attempting.
+# test_func works
+# test_func <- function(dlow, dup, ssize){
+#   accepted = c()
+# while (length(accepted) < ssize){
+#   s_i = runif(1,dlow,dup)
+#   f_si = dnorm(s_i, 8, 1.2)
+#   # print(paste0("f_si is ", f_si))
+#   M_g_si = 1.7*dunif(s_i,dlow,dup)
+#   # print(paste0("M_g_si is ", M_g_si))
+#   accept_prob = f_si / M_g_si
+#   # print(paste0("accept prob is ", accept_prob))
+#   u_i = runif(1,0,1)
+#   print(paste0("u_i is ", u_i))
+#   if (u_i <= accept_prob){
+#     print(paste0("ui is: ", u_i))
+#     print(paste0("accept_prob is: ", accept_prob))
+#     accepted = append(accepted, s_i)
+#     print(tail(accepted))
+#   }
+# }
+#   return(accepted)
+# }
+#
+# tf <- test_func(dlow=1,dup=15,ssize=1000)
+# hist(tf)
+
+#### try adapting Ben's example and adding in candidate dist
+sample_reject <- function(in_dist, dlow, dup, ssize) {
+  accepted <- c()
+  while (length(accepted) < ssize) {
+    s_i <- runif(1, dlow, dup)
+    f_si <- in_dist(x = s_i)
+    # print(paste0("f_si is ", f_si))
+    M_g_si <- 1.7 * dunif(s_i, dlow, dup)
+    # print(paste0("M_g_si is ", M_g_si))
+    accept_prob <- f_si / M_g_si
+    # print(paste0("accept prob is ", accept_prob))
+    u_i <- runif(1, 0, 1)
+    # print(paste0("u_i is ", u_i))
+    if (u_i <= accept_prob) {
+      # print(paste0("u_i is: ", u_i))
+      # print(paste0("accept_prob is: ", accept_prob))
+      accepted <- append(accepted, s_i)
+      # print(tail(accepted))
+    }
+  }
+  return(accepted)
+}
+dfn <- function(x) dnorm(x, mean = 8, sd = 1)
+
+out_test <- sample_reject(dfn, dlow = 1, dup = 15, ssize = 1000)
+hist(out_test)
+length(out_test) == 1000
+is.vector(out_test)
+```
+
+```{r Exercise 2 with M calc}
+# modified Exercise 2 with a calc for M in function
+
+sample_reject <- function(in_dist, dlow, dup, ssize) {
+  accepted <- c()
+  M <- optimize(in_dist, interval = c(dlow,dup), maximum = T)$maximum
+  while (length(accepted) < ssize) {
+    s_i <- runif(1, dlow, dup)
+    f_si <- in_dist(x = s_i)
+    # print(paste0("f_si is ", f_si))
+    M_g_si <- M * dunif(s_i, dlow, dup)
+    # print(paste0("M_g_si is ", M_g_si))
+    accept_prob <- f_si / M_g_si
+    # print(paste0("accept prob is ", accept_prob))
+    u_i <- runif(1, 0, 1)
+    # print(paste0("u_i is ", u_i))
+    if (u_i <= accept_prob) {
+      # print(paste0("u_i is: ", u_i))
+      # print(paste0("accept_prob is: ", accept_prob))
+      accepted <- append(accepted, s_i)
+      # print(tail(accepted))
+    }
+  }
+  return(accepted)
+}
+
+# test the new and improved version of sample_reject
+
+dfn <- function(x) dnorm(x, mean = 8, sd = 1)
+
+out_test <- sample_reject(dfn, dlow = 1, dup = 15, ssize = 1000)
+hist(out_test)
+length(out_test) == 1000
+is.vector(out_test)
+```
+
+
+
+## Exercise 3.
+Produce a Markov-Chain Monte Carlo function for one-dimensional sampling based on the Metropolis Algorithm. The function should take as arguments the target density function (PDF), a proposal function, a starting point, and the number of steps to evaluate. The output should be a vector with length equal to the number of steps.
+```{r ex 3}
+# REVIEW SLIDE 29 FOR PSEUDOCODE
+xi <- runif(1, 0, 1) # generate random xi starting point
+
+targ_pdf <- function(x) dnorm(x, mean = 2, sd = 1) # define distribution function f(x), 
+# ie PDF
+
+prop <- function(xi) {
+  xi + rnorm(1, 0, 1)
+} # we take xi, then add a random normal to give xi + 1 (ie, our proposed new 
+# sample)
+
+steps <- 100
+
+# try a simple while loop before putting it in a func
+# accepted <- c(xi) # the initial vector includes the starting value, xi
+# while (length(accepted) < steps) {
+#   xstari_1 <- prop(xi) # get our proposed new sample, ie xi*+1
+#   ui_1 <- runif(1, 0, 1) # get our random uniform for the accept/reject if ratio < 1
+#   print(targ_pdf(xstari_1))
+#   ratio <- targ_pdf(xstari_1) / targ_pdf(xi)
+#   if (ratio >= 1) {
+#     accepted <- append(accepted, xstari_1)
+#     xi <- xstari_1
+#   } else {
+#     if (ratio > runif(1)) {
+#       accepted <- append(accepted, xstari_1)
+#     }
+#   }
+# }
+# hist(accepted)
+# above works, so put it in a func
+
+# mcmc function
+mcmc <- function(targ_pdf, prop, xi, steps) {
+  accepted <- c(xi) # the initial vector includes the starting value, xi
+  while (length(accepted) < steps) {
+    xstari_1 <- prop(xi) # get our proposed new sample, ie xi*+1
+    ui_1 <- runif(1, 0, 1) # get our random uniform for the accept/reject if ratio < 1
+    ratio <- targ_pdf(xstari_1) / targ_pdf(xi)
+    if (ratio >= 1) {
+      accepted <- append(accepted, xstari_1)
+      xi <- xstari_1
+    } else {
+      if (ratio > runif(1)) {
+        accepted <- append(accepted, xstari_1)
+      }
+    }
+  }
+  return(accepted)
+}
+
+out_mcmc <- mcmc(targ_pdf = targ_pdf, prop = prop, xi = xi, steps = 1000)
+hist(out_mcmc)
+
+# define some other target pdf from class notes and sample to test the func
+df <- function(x) {
+  return(.7 * dnorm(x, mean = 2, sd = 1) + .6 * dnorm(x, mean = 5, sd = 1))
+}
+
+new_xi <- 6
+out_mcmc2 <- mcmc(targ_pdf = df, prop = prop, xi = new_xi, steps = 1000)
+hist(out_mcmc2)
+# Looks like it works, but I had to increase the magnitude of the second normal hump to test it,
+# otherwise, it seemed to miss it.  Guessing this is why diagnostics are 
+# important.
+```
+
+
+
+## Exercise 4.
+Prepare a function that can accept multiple MCMC chains and produce Gelman diagnostics. The function should produce a tabular output of the within-chain variance (W), between-chain variance (B), weighted variance estimate, the Gelman ratio (Rˆ), and the effective sample size (neff).
+
+```{r ex 4}
+# ToDo
+```

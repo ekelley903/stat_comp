@@ -1,0 +1,179 @@
+---
+title: "HW6"
+author: "E. Kelley"
+date: "11/22/2022"
+output: pdf_document
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+library(MASS)
+library(caret)
+library(glmnet)
+library(ISLR)
+library(mgcv)
+```
+
+## Exercise 1
+### (a)  
+
+```{r}
+college <- read_csv("../HW5/College.csv") %>% janitor::clean_names() %>%
+  rename(college_name = x1)
+set.seed(578)
+train_num = round(nrow(college)*0.7)
+train <- sample(1:nrow(college), train_num)
+test <- (-train)
+y.test <- college$outstate[test]
+```
+
+### (b)  
+
+```{r}
+x = model.matrix(outstate ~., data=college[,-1])[,-1]
+y = college$outstate
+
+grid = 10^seq(10, -2, length=100)
+
+lasso.mod = glmnet(x[train,], y[train], alpha=1, lambda=grid)
+cv.out = cv.glmnet(x[train,], y[train], alpha=1) # alpha = 1 for lasso
+bestlam = cv.out$lambda.min
+bestlam
+
+lasso.pred = predict(lasso.mod, s = bestlam, newx=x[test,])
+paste0("MSE :", mean((lasso.pred - y.test)^2))
+paste0("RMSE :", sqrt(mean((lasso.pred - y.test)^2)))
+hist(y)
+
+out = glmnet(x, y, alpha=1)
+lasso.coef = predict(out, type="coefficients", s=bestlam) [1:17,]
+lasso.coef
+
+lasso.coef[lasso.coef!=0]
+```
+
+We can drop these predictors:
+```{r}
+lasso.coef[lasso.coef==0]
+
+```
+
+### (c)  
+From the model in part (b), drop top25perc and p_undergrad from the list of parameters. Now, fit a gam to the numeric variables. I'm starting with a linear fit to use as a comparison. Based on the linear model, it looks like enroll, f_undergrad, books, personal, ph_d could all be dropped. 
+```{r}
+train_df <- college[train, -1]
+test_df <- college[-train, -1]
+linear.fit <- gam(outstate ~ private + apps + accept + enroll +
+                 top10perc + f_undergrad + 
+                 room_board + books + personal + ph_d +
+                 terminal + s_f_ratio + perc_alumni +
+                 expend + grad_rate, data=train_df, method = "REML")
+
+summary(linear.fit)
+
+gam.fit <- gam(outstate ~ private + s(apps) + s(accept) + s(enroll) +
+                 s(top10perc) + s(f_undergrad) +
+                 s(room_board) + s(books) + s(personal) + s(ph_d) +
+                 s(terminal) + s(s_f_ratio) + s(perc_alumni) +
+                 s(expend) + s(grad_rate), data=train_df, method = "REML")
+summary(gam.fit)
+plot.gam(gam.fit,residuals=T)
+
+# update the gam based on model plots
+
+gam.fit.update <- gam(outstate ~ private + apps + s(accept) + s(enroll) + room_board + terminal + s(s_f_ratio) + perc_alumni + s(expend) + s(grad_rate), data=train_df, method = "REML")
+summary(gam.fit.update)
+```
+### (d)  
+The MSE for the updated gam fit was the lowest, and it's the simplest model as well. The RMSE is approximately 1942, and the mean outstate is ~10k, so that's probably an acceptable error rate.
+```{r}
+linear.fit.mse = mean((test_df$outstate - predict(linear.fit,test_df))^2)
+print(paste0("linear fit MSE: ", round(linear.fit.mse, digits=2)))
+print(paste0("linear fit RMSE: ", round(sqrt(linear.fit.mse), digits=2)))
+
+
+gam.fit.mse = mean((test_df$outstate - predict(gam.fit,test_df))^2)
+print(paste0("gam fit MSE: ", round(gam.fit.mse, digits=2)))
+print(paste0("gam fit RMSE: ", round(sqrt(gam.fit.mse), digits=2)))
+
+
+gam.fit.update.mse = mean((test_df$outstate - predict(gam.fit.update,test_df))^2)
+print(paste0("gam updated fit MSE: ", round(gam.fit.update.mse, digits=2)))
+print(paste0("gam updated fit RMSE: ", round(sqrt(gam.fit.update.mse), digits=2)))
+```
+
+### (e)  
+Accept, personal, ph_d, s_f_ratio, expend, grad_rate all look non-linear. s_f_ratio, expend, and grad_rate look the most non-linear of the variables. While enroll wasn't significant in the linear model, it was in the gam (p val 0.01600 *). s_f_ratio p value dropped in the gam, so that would should be left linear, even though the plot was borderline. 
+
+
+## Exercise 2  
+### (a)  
+```{r}
+data(OJ)
+?OJ
+glimpse(OJ)
+train_num = 800
+train <- sample(1:nrow(OJ), train_num)
+test <- (-train)
+train_df <- OJ[train,]
+test_df <- OJ[test,]
+```
+
+### (b)  
+The training classification error rate is 0.1475; we predicted 118/800 classes incorrectly. There are nine terminal nodes (leaves).
+```{r}
+library(rpart)
+tree.fit <- rpart(Purchase ~ ., data=train_df)
+tree.probs = predict(tree.fit, reponse="probs")
+levels(OJ$Purchase)
+tree.preds = ifelse(tree.probs[,1] > 0.5,"CH", "MM")
+tree.error = sum(tree.preds != train_df$Purchase) 
+tree.error
+118/800
+summary(tree.fit)
+```
+
+### (c) 
+PriceDiff and LoyalCH are super important nodes for determining OJ purchase. PriceDiff is how much Minute Maid price exceeds Citrus Hill. LoyalCH is customer brand loyalty for Citrus Hill. Obviously, the correct answer is neither: just drink coffee. There are a total of 8 branches and 9 leaves.
+```{r}
+library(rpart.plot)
+rpart.plot(tree.fit, digits=3)
+```
+
+
+### (d) 
+The test classification error rate is 0.189.
+```{r}
+tree.probs = predict(tree.fit, newdata=test_df, reponse="probs")
+levels(OJ$Purchase)
+tree.preds = ifelse(tree.probs[,1] > 0.5,"CH", "MM")
+tree.error = sum(tree.preds != test_df$Purchase) 
+tree.error
+# 51/270 seems not too shabby
+
+table(prediction=tree.preds, truth=test_df$Purchase)
+```
+
+### (e)  
+I didn't see an example from class using cv.tree, so I used rpart.control instead. It looks like the tree from part (b) was already the optimal complexity. 
+```{r}
+train.control = rpart.control(xval = 10)
+cv.tree.fit = rpart(Purchase ~ ., data=train_df, control = train.control)
+summary(cv.tree.fit)
+cp <- 0.01000000
+plotcp(cv.tree.fit)
+prune.tree.fit = rpart(Purchase ~ ., data=train_df, cp = cp)
+
+prune.tree.probs = predict(prune.tree.fit, newdata=test_df, reponse="probs")
+prune.tree.preds = ifelse(prune.tree.probs[,1] > 0.5,"CH", "MM")
+prune.tree.error = sum(prune.tree.preds != test_df$Purchase) 
+prune.tree.error
+
+```
+
+
+

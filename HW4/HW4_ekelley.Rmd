@@ -1,0 +1,166 @@
+---
+title: "HW4"
+author: "E. Kelley"
+date: "10/28/2022"
+output: pdf_document
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+library(MASS)
+library(caret)
+library(glmnet)
+```
+
+## Exercise 1  
+Based on the stepwise variable selection, the model with the lowest AIC was:
+```
+Step:  AIC=236.22
+crim_abv_med ~ nox + rad + tax + zn + black + dis + ptratio + 
+    medv + age
+```
+The best model via lasso was (AIC 289.14):
+```
+crim_abv_med ~ rm + rad + zn + nox + age
+```
+I'm a little surprised lasso turned out a model with a higher AIC than stepwise. I think my next step would be to calculate prediction accuracy for both models instead of just for the lasso based model (accuracy 0.79).   
+
+```{r}
+data(Boston)
+?Boston
+boston <- Boston %>%
+  mutate(crim_median = median(crim)) %>%
+  mutate(crim_abv_med = case_when(
+    crim > crim_median ~ 1,
+    crim <= crim_median ~ 0
+  ))
+rm(Boston)
+# sanity check
+table(boston$crim_abv_med)
+
+smallest <- crim_abv_med ~ 1
+largest <- crim_abv_med ~ zn + indus + chas + nox + rm + age + dis + rad + tax +
+  ptratio + black + lstat + medv
+
+step_glm_boston <- glm(crim_abv_med ~ 1, data = boston, family = "binomial")
+step_out <- step(step_glm_boston, scope = list(lower = smallest, upper = largest))
+```
+
+
+```{r}
+# let's just go with lasso
+x <- model.matrix(crim_abv_med ~ ., data = boston)[, -c(1, 2, 15, 16)]
+y <- boston$crim_abv_med
+
+grid <- 10^seq(10, -2, length = 100)
+
+## predictions
+set.seed(1)
+train <- sample(1:nrow(x), nrow(x) / 2)
+test <- (-train)
+y.test <- y[test]
+
+lasso.mod <- glmnet(x[train, ], y[train], family = "binomial", alpha = 1, lambda = grid)
+set.seed(1)
+cv.out <- cv.glmnet(x[train, ], y[train], alpha = 1) # alpha = 1 for lasso
+bestlam <- cv.out$lambda.min
+bestlam
+
+lasso.pred <- predict(lasso.mod, s = bestlam, newx = x[test, ], type = "response")
+lasso.pred.classes <- ifelse(lasso.pred > 0.5, 1, 0)
+misclass_err <- lasso.pred.classes != y.test
+misclass_err_mean <- mean(misclass_err)
+accuracy <- 1 - misclass_err_mean
+
+out <- glmnet(x, y, family = "binomial", alpha = 1)
+lasso.coef <- predict(out, type = "coefficients", s = bestlam)
+lasso.coef
+which(lasso.coef != 0)
+coeff_names <- lasso.coef@Dimnames[[1]][which(lasso.coef != 0)] # pull out coeff name's
+lasso_best_model <- glm(crim_abv_med ~ chas + rm + rad + black +
+  zn + nox + age + ptratio, data = boston)
+summary(lasso_best_model)
+# dropping the predictors with non-significant p values in summary of best model
+lasso_maybe_better_model <- glm(crim_abv_med ~ rm + rad +
+  zn + nox + age, data = boston)
+
+summary(lasso_maybe_better_model)
+```
+
+## Exercise 2
+```{r}
+num_bs <- 1e5
+orig_samp <- rnorm(1000, 0, 1)
+length(unique(orig_samp))
+from_orig <- numeric(100000)
+start <- Sys.time()
+for (i in 1:num_bs) {
+  s <- sample(orig_samp, 1000, replace = T)
+  # bs_samp <- append(bs_samp, s)
+  t <- length(intersect(orig_samp, s))
+  from_orig[i] <- t / 1000
+}
+Sys.time() - start
+
+hist(from_orig)
+```
+
+## Exercise 3
+```{r}
+library(ISLR)
+data("Weekly")
+weekly_glm <- glm(I(Direction == "Up") ~ Lag1 + Lag2, data = Weekly, family = "binomial")
+summary(weekly_glm)
+weekly_train <- Weekly[-1, ]
+weekly_glm_loo <- glm(I(Direction == "Up") ~ Lag1 + Lag2, data = weekly_train, family = "binomial")
+summary(weekly_glm_loo)
+
+weekly_glm_loo_probs <- predict(weekly_glm_loo, newdata = Weekly[1, ], type = "response")
+weekly_glm_loo_preds <- ifelse(weekly_glm_loo_probs > 0.5, 1, 0)
+weekly_glm_loo_preds
+# that output is super confusing, but it's element 1 and prediction 1
+length(weekly_glm_loo_preds)
+```
+
+
+```{r}
+misclass_err <- c()
+Sys.time()
+for (fold in 1:nrow(Weekly)) {
+  df <- Weekly # data_set
+  train_df <- df[-fold, ]
+  test_df <- df[fold, ]
+  mod <- glm(I(Direction == "Up") ~ Lag1 + Lag2,
+    data = train_df, family = "binomial"
+  )
+
+  pred_probs <- predict(mod, newdata = test_df, type = "response")
+  preds <- ifelse(pred_probs > 0.5, 1, 0)
+  misclass_err_single <- preds != I(test_df$Direction == "Up")
+  misclass_err <- append(misclass_err, misclass_err_single)
+}
+
+mean_misclass_err <- mean(misclass_err)
+paste0(
+  "Mean misclassification error via loocv for loop: ",
+  round(mean_misclass_err, digits = 3)
+)
+# need to ask why boot and not caret?
+# # define training control
+# train_control = trainControl(method = "LOOCV")
+#
+# # train the model on training set
+# cv_model = train(Direction ~ Lag1 + Lag2, data = Weekly, trControl = train_control, method = "glm", family=binomial())
+#
+# summary(cv.model)
+library(boot)
+?cv.glm
+cost <- function(r, pi = 0) mean(abs(r - pi) > 0.5)
+cv_model <- cv.glm(data = Weekly, glmfit = weekly_glm, cost = cost)
+cv_err <- cv.glm(Weekly, weekly_glm, cost, K = nrow(Weekly))$delta
+paste0("Misclassification error via cv.glm: ", round(cv_err[[1]], digits = 3))
+```
